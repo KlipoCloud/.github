@@ -45,10 +45,14 @@ jobs:
           cache: "npm"
           registry-url: https://npm.pkg.github.com/
           scope: "@klipocloud"
+      - name: bun setup
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
       # Install NPM packages
       - name: Install NPM packages
-        run: npm install
+        run: bun install --frozen-lockfile
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GH_REGISTRY_PACKAGES }}
 
@@ -56,15 +60,17 @@ jobs:
         run: |
           echo ${{ env.ENVIRONMENT_NAME }}
           echo ${{ github.ref }}
-          npm run build --if-present
-          npm run test:cov --if-present
-
-      # Cache the coverage report
-      - name: Cache coverage reports
-        uses: actions/cache@v3
+          bun index.ts
+          bun run build --if-present
+          bun test --coverage --if-present
+      - name: Configure Next.js cache
+        uses: actions/cache@v4
         with:
-          path: coverage
-          key: current-test-coverage
+          path: |
+            ${{ github.workspace }}/.next/cache
+          key: nextjs-cache-${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
+          restore-keys: |
+            nextjs-cache-${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}-
 
 #  sonarcloud:
 #    name: SonarCloud
