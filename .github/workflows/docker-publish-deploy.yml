@@ -52,7 +52,7 @@ jobs:
 
       # Install NPM packages
       - name: Install NPM packages
-        run: bun install --frozen-lockfile
+        run: bun install
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GH_REGISTRY_PACKAGES }}
 
