@@ -42,16 +42,16 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: ${{ inputs.node-version }}
-          cache: "npm"
-          registry-url: https://npm.pkg.github.com/
+          cache: "bun"
+          registry-url: https://bun.pkg.github.com/
           scope: "@klipocloud"
       - name: bun setup
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      # Install NPM packages
-      - name: Install NPM packages
+      # Install BUN packages
+      - name: Install BUN packages
         run: bun install
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GH_REGISTRY_PACKAGES }}
