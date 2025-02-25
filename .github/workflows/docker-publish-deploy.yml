@@ -42,8 +42,8 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: ${{ inputs.node-version }}
-          cache: "bun"
-          registry-url: https://bun.pkg.github.com/
+          cache: "npm"
+          registry-url: https://npm.pkg.github.com/
           scope: "@klipocloud"
       - name: bun setup
         uses: oven-sh/setup-bun@v2
