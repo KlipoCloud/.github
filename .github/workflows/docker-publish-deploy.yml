@@ -60,7 +60,6 @@ jobs:
         run: |
           echo ${{ env.ENVIRONMENT_NAME }}
           echo ${{ github.ref }}
-          bun index.ts
           bun run build
           bun test --coverage
       - name: Configure Next.js cache
