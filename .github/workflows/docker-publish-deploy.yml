@@ -49,8 +49,6 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      - name: nest setup
-        run: bun install -g @nestjs/cli
         
       # Install BUN packages
       - name: Install BUN packages
