@@ -1,0 +1,155 @@
+name: Containerize and Deploy
+
+on:
+  workflow_call:
+    inputs:
+      node-version: # Can be removed if no Node used; kept for compatibility
+        type: string
+        default: 20.x
+      environment_variables:
+        type: string
+      application_name:
+        type: string
+    outputs:
+      image_version:
+        description: "Image version created for the Container"
+        value: ${{ jobs.containerize.outputs.external_image_version }}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}-ng
+  REPO_NAME: ""
+  ENVIRONMENT_NAME: ${{ github.ref == 'refs/heads/main' && 'staging' || github.ref == 'refs/heads/develop' && 'develop' || github.ref == 'refs/heads/qa' && 'qa' || startsWith(github.ref, 'refs/tags/v') && 'prod' || 'develop' }}
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Install dependencies
+        run: go mod tidy
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Build Go application
+        run: |
+          mkdir -p build/
+          GOOS=linux GOARCH=amd64 go build -o build/app .
+
+  containerize:
+    name: Dockerize
+    runs-on: ubuntu-latest
+    needs: [build-and-test]
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+      id-token: write
+
+    outputs:
+      image_id: ${{ steps.meta.outputs.tags }}
+      image_version: ${{ steps.meta.outputs.version }}
+      external_image_version: ${{ steps.image_version.outputs.IMAGE_VERSION }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Create .env file based on Variable Names
+        id: parse-secrets-json
+        run: |
+          if [[ $ENV == 'develop' ]]; then
+            PREFIX=DEV_
+          elif [[ $ENV == 'qa' ]]; then
+            PREFIX=QA_
+          elif [[ $ENV == 'staging' ]]; then
+            PREFIX=UAT_
+          elif [[ $ENV == 'prod' ]]; then
+            PREFIX=''
+          else
+            PREFIX='NO_ENVIRONMENT_'
+          fi
+          for variable_name in $(echo "${{ inputs.environment_variables }}"); do
+            VARIABLE_NAME=$(echo $variable_name | cut -d'=' -f 1)
+            SECRET_NAME=$(echo $variable_name | cut -d'=' -f 2)
+            if [[ -n $SECRET_NAME ]]; then
+              result=$(echo "$ALLMYVARS" | jq -r ".${PREFIX}$SECRET_NAME")
+              if [[ $result == 'null' ]]; then
+                result=$(echo "$ALLMYSECRETS" | jq -r ".${PREFIX}$SECRET_NAME")
+                if [[ $result == 'null' ]]; then
+                  result=$SECRET_NAME
+                fi
+              fi
+            else
+              result=$SECRET_NAME
+            fi
+            echo $VARIABLE_NAME=$result >> .env
+          done
+        shell: bash
+        env:
+          ENV: ${{ env.ENVIRONMENT_NAME }}
+          ALLMYSECRETS: ${{ toJson(secrets) }}
+          ALLMYVARS: ${{ toJson(vars) }}
+
+      - name: Install cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Setup Docker buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log into registry ${{ env.REGISTRY }}
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=${{ env.ENVIRONMENT_NAME }}-
+          labels: |
+            org.opencontainers.image.vendor=KlipoCloud
+
+      - name: Output encoded image version
+        id: image_version
+        env:
+          IMAGE_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          echo "IMAGE_VERSION=$(echo $IMAGE_VERSION | base64 -w0 | base64 -w0)" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        id: build-and-push
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          secrets: |
+            "github_registry_token=${{ secrets.GH_REGISTRY_PACKAGES }}"
+
+      - name: Sign the published Docker image
+        if: ${{ github.event_name != 'pull_request' && !github.event.repository.private }}
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: cosign sign ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}
